@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Temporary folders made by the tests
+tests/.confirmation-*/
+tests/.usecase-*/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local agent settings
+.claude/settings.local.json
+
+# Documents generated when you try the skills, and the local examples
+/docs/
+/sop.md
+/sumber.md
+/contoh/
+.clarification-state.json
