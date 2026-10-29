@@ -26,13 +26,12 @@ VAGUE = re.compile(
     r"segera|secepatnya|jika perlu|bila perlu|sebaiknya|mungkin|dll|dsb|dan sebagainya)(?!\w)", re.I)
 RANGE = re.compile(r"(?:AL|FR|OQ|BR|VAL|EXC|UC|TC|NFR-[A-Z]{3})-\d+\s+(?:sampai|hingga|s\.d\.)\s+"
                    r"(?:AL|FR|OQ|BR|VAL|EXC|UC|TC|NFR)-", re.I)
-FSD_PARTS = ["tujuan dan lingkup modul", "aktor dan hak akses", "prasyarat dan pemicu", "alur proses", "input",
+FSD_PARTS = ["tujuan dan lingkup modul", "aktor dan hak akses", "prasyarat dan pemicu", "input",
              "output", "aturan bisnis", "validasi", "penanganan pengecualian", "skenario use case", "keterlacakan",
              "pertanyaan terbuka"]
 UC_HEADER = ["ID", "Use Case", "Modul", "Aktor utama", "Sumber"]
 UC_ATTR = ["Tujuan", "Prasyarat", "Kondisi akhir berhasil", "Kondisi akhir gagal", "Aktor utama", "Pemicu"]
 UC_FLOW = ["No", "Aksi Aktor", "Respons Sistem", "Rujukan"]
-UC_EXT = ["No", "Pada langkah", "Kondisi", "Tindakan", "Rujukan"]
 UC_BLOCK = re.compile(r"^\*\*(UC-\d{3})\s+[\u2014\u2013-]\s+(.+?)\*\*\s*$", re.M)
 COVER = ("FR", "BR", "VAL", "EXC")
 OQ_HEADER = ["ID", "Pertanyaan", "Aktivitas terkait", "Mempengaruhi", "Prioritas", "Penjawab", "Status"]
@@ -145,10 +144,10 @@ def write_toc(path):
         f.write(new)
 
 
-def check_trace(name, text, expected, err):
+def check_trace(name, text, expected, err, section="keterlacakan"):
     """expected: AL -> {kolom: set}; kolom 1.. dibaca dari sel tabel Keterlacakan (pola per kolom)."""
     got = {}
-    for header, rows in tables(h2_text(text, "keterlacakan")):
+    for header, rows in tables(h2_text(text, section)):
         for c in rows:
             if re.fullmatch(P["AL"], c[0]):
                 got[c[0]] = c
@@ -365,6 +364,29 @@ def read_use_cases(fsd, al_rows, mod_of_al, defined, err):
     return ucs
 
 
+def stacked_tables(text):
+    """Lines where a table starts right after another table, with at most a short label between them."""
+    out, state, fence = [], None, False
+    for n, line in enumerate(text.splitlines(), 1):
+        if line.startswith("```"):
+            fence, state = not fence, None
+            continue
+        row = line.strip()
+        if fence:
+            continue
+        if row.startswith("|"):
+            if state == "gap":
+                out.append(n)
+            state = "table"
+        elif not row:
+            state = "gap" if state == "table" else state
+        elif state == "gap" and not row.startswith("#") and len(row.split()) <= 3:
+            continue
+        else:
+            state = None
+    return out
+
+
 def check_scenarios(m, ucs, src_of, fr_rows, err, warn):
     """Skenario use case of one module: complete attributes, a main flow, and every FR/BR/VAL/EXC of the activity."""
     body = m["subs"].get("skenario use case", "")
@@ -394,8 +416,11 @@ def check_scenarios(m, ucs, src_of, fr_rows, err, warn):
             err.append(f"{uid}: alur utama (kolom {' | '.join(UC_FLOW)}) tidak ada")
         elif any(not v for c in flow[0] if len(c) == len(UC_FLOW) for v in c):
             err.append(f"{uid}: alur utama berisi sel kosong")
-        if not any(header == UC_EXT for header, _ in tables(text)) and not re.search(r"Tidak ada", text.split("Ekstensi")[-1]):
-            err.append(f"{uid}: tulis tabel ekstensi ({' | '.join(UC_EXT)}) atau 'Tidak ada'")
+        if "```mermaid" not in text:
+            err.append(f"{uid}: diagram aktivitas (Mermaid) belum ada; setiap use case punya satu")
+        ext = text.split("Ekstensi:")[-1] if "Ekstensi:" in text else ""
+        if not re.search(r"^- E\d+", ext, re.M) and "Tidak ada" not in ext:
+            err.append(f"{uid}: tulis ekstensi sebagai daftar '- E1, pada langkah n: ...' atau 'Tidak ada.'")
         a = mine[uid][0]
         need = {i for i, s in src_of.items() if a in s} | {r for r, c in fr_rows.items() if a in ids(P["AL"], c[2])}
         missing = need - set(re.findall("|".join(P[k] for k in COVER), text))
@@ -532,10 +557,8 @@ def lint(docs, source=None):
                     ("aturan bisnis", br_mod, "BR", ["ID", "Aturan", "Sumber", "Basis"]),
                     ("validasi", val_mod, "VAL", ["ID", "Data", "Aturan Validasi", "Tindakan Sistem", "Sumber", "Basis"]),
                     ("penanganan pengecualian", exc_mod, "EXC", ["ID", "Kondisi", "Tindakan Sistem", "Sumber", "Basis"]),
-                    ("aktor dan hak akses", None, None, ["Aktor", "Hak", "Sumber", "Basis"]),
                     ("input", None, None, ["Data", "Wajib", "Keterangan", "Sumber", "Basis"]),
-                    ("output", None, None, ["Keluaran", "Keterangan", "Sumber", "Basis"]),
-                    ("alur proses", None, None, ["No", "Pelaku", "Langkah", "Sumber"])):
+                    ("output", None, None, ["Keluaran", "Keterangan", "Sumber", "Basis"])):
                 body = m["subs"].get(part, "")
                 tbls = [x for x in tables(body) if x[0][:1] == hdr[:1]]
                 if not tbls and not re.search(r"Tidak ada|Belum ditentukan|Tidak disebut", body):
@@ -569,7 +592,7 @@ def lint(docs, source=None):
                 err.append(f"FSD modul {m['num']}: baris Sumber AL di Keterlacakan tidak sama dengan modul")
             if RANGE.search(trace):
                 err.append(f"FSD modul {m['num']}: Keterlacakan memakai rentang ID")
-        # peta modul dan keterlacakan bab 5
+        # peta modul dan lampiran A keterlacakan
         for header, rows in tables(h2_text(fsd, "gambaran umum proses")):
             if header[:2] == ["Modul", "Sumber AL"]:
                 for c in rows:
@@ -577,7 +600,9 @@ def lint(docs, source=None):
                     f = fmap.get(n[0]) if n else None
                     if not f or ids(P["AL"], c[1]) != f["als"] or ids(P["FR"], c[2]) != frd_mod_fr[f["num"]]:
                         err.append(f"FSD 2.3 Peta Modul: baris '{c[0]}' tidak sama dengan FRD")
-        check_trace("FSD.md", fsd, {a: {1: (r"\d+\.\d+", {mod_of_al.get(a)} - {None})} for a in al_rows}, err)
+        check_trace("FSD.md", fsd, {a: {1: (r"\d+\.\d+", {mod_of_al.get(a)} - {None})} for a in al_rows}, err,
+                    section="lampiran a")
+        warn += [f"FSD:{n}: dua tabel berurutan tanpa kalimat pengantar di antaranya" for n in stacked_tables(fsd)]
         check_all = ids(P["NFR"], fsd) - set(nfr_rows)
         err += [f"FSD: {n} tidak ada di NFRD" for n in sorted(check_all)]
 

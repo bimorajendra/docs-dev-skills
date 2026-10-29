@@ -63,6 +63,21 @@ class UseCaseTests(unittest.TestCase):
                                             "| UC-004 | Meneruskan tiket ke divisi terkait | 3.1 |"))
         self.assert_error("UC-004: Modul harus modul dari AL-004")
 
+    def test_every_use_case_needs_its_own_activity_diagram(self):
+        def drop_diagram(text):
+            start = text.index("**UC-002")
+            at = text.index("```mermaid", start)
+            return text[:at] + "```text" + text[at + len("```mermaid"):]
+        self.edit(drop_diagram)
+        self.assert_error("UC-002: diagram aktivitas")
+
+    def test_two_tables_in_a_row_are_flagged(self):
+        stacked = "\n".join(["| a |", "|---|", "| 1 |", "", "Alur:", "", "| b |", "|---|", "| 2 |", ""])
+        self.assertEqual(VALIDATOR.stacked_tables(stacked), [7])
+        spaced = stacked.replace("Alur:", "Tabel berikut memuat langkah dari awal sampai selesai.")
+        self.assertEqual(VALIDATOR.stacked_tables(spaced), [])
+        self.assertEqual(VALIDATOR.stacked_tables(stacked.replace("Alur:", "## Bagian")), [])
+
     def test_scenario_name_must_match_the_list(self):
         self.edit(lambda text: text.replace("**UC-005 — Memberikan solusi yang disetujui**", "**UC-005 — Nama lain**"))
         self.assert_error("UC-005: nama pada skenario berbeda")
